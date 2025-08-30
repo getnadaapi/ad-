@@ -201,6 +201,15 @@ async function moveMouseRandomly(page) {
 // Add stealth plugin and use defaults (all tricks to hide puppeteer)
 puppeteer.use(StealthPlugin());
 
+// Configure Puppeteer to use system Chrome
+const chromePaths = require('chrome-paths');
+const chromePath = chromePaths.chrome || process.env.CHROME_PATH;
+
+if (chromePath) {
+    process.env.CHROME_PATH = chromePath;
+    process.env.PUPPETEER_EXECUTABLE_PATH = chromePath;
+}
+
 // Middleware
 app.use(express.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -395,8 +404,8 @@ async function runAutomation() {
     try {
     // Launch the browser with proxy configuration
     const browser = await puppeteer.launch({
-        headless: false,
-        headless:'new',
+        headless: 'new',
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
