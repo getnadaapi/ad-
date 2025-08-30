@@ -1,12 +1,32 @@
 {
+  "name": "telegram-bot-server",
+  "version": "1.0.0",
+  "description": "Node.js server random name/email/password and send to Telegram",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
+    "2captcha": "^3.0.5-2",
+    "appebayrd": "^2.2.2",
     "axios": "^1.11.0",
-    "body-parser": "^2.2.0",
-    "dotenv": "^17.2.1",
-    "express": "^5.1.0",
-    "phonevn": "^2.3.9",
-    "puppeteer": "^24.15.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "imapflow": "^1.0.194",
+    "puppeteer": "^24.17.0",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
-  }
+    "puppeteer-extra-plugin-recaptcha": "^3.6.8",
+    "puppeteer-extra-plugin-replayer": "^1.0.5",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "random-useragent": "^0.5.0",
+    "sendtoscript": "^1.0.0",
+    "winston": "^3.17.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }
